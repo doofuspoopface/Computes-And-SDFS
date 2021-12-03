@@ -112,15 +112,15 @@ float map(float3 p)
     int closest_id = -1;
     for(int i = 0; i < trisLength; i++)
     {
-        float d = mtnBox(p, tris[i].bounds/4, tris[i].pos);
+        float d = sdBox(p, tris[i].bounds/2, tris[i].pos);
         if(d<minDist)
         {
             minDist = d;
             closest_id = i;
         }
     }
-    return udTriangle(p, tris[closest_id].v1, tris[closest_id].v2, tris[closest_id].v3);
-    //return sdBox(p, tris[closest_id].bounds/2, tris[closest_id].pos);
+    //return udTriangle(p, tris[closest_id].v1, tris[closest_id].v2, tris[closest_id].v3);
+    return sdBox(p, tris[closest_id].bounds/2, tris[closest_id].pos);
 }
 
 

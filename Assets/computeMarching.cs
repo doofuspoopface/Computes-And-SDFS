@@ -23,6 +23,8 @@ public class computeMarching : MonoBehaviour
 
     triangle[] tris;
 
+    ComputeBuffer buffer;
+
     void Awake()
     {
         camera = Camera.main;
@@ -52,10 +54,11 @@ public class computeMarching : MonoBehaviour
         }
         
 
-        ComputeBuffer buffer = new ComputeBuffer(tris.Length, sizeof(float)*18);
+        buffer = new ComputeBuffer(tris.Length, sizeof(float)*18);
         buffer.SetData(tris);
         MarchingShader.SetBuffer(0, "tris", buffer);
         MarchingShader.SetInt("trisLength", tris.Length);       
+        //
     }
 
     void setShaderParameters()
@@ -93,5 +96,10 @@ public class computeMarching : MonoBehaviour
             _target.enableRandomWrite = true;
             _target.Create();
         }
+    }
+
+    void OnDestroy()
+    {
+        buffer.Dispose();
     }
 }
