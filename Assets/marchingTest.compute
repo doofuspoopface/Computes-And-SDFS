@@ -1,0 +1,223 @@
+// Each #kernel tells which function to compile; you can have many kernels
+#pragma kernel CSMain
+
+
+// Create a RenderTexture with enableRandomWrite flag and set it
+// with cs.SetTexture
+RWTexture2D<float4> Result;
+
+float4x4 _CamToWorld;
+float4x4 _CamInverseProj;
+
+RWStructuredBuffer<int> debugs;
+
+struct Ray
+{
+    float3 origin;
+    float3 direction;
+};
+
+struct tri
+{
+    float3 v1, v2, v3;
+    float3 pos;
+    float3 nor;
+    float3 bounds;
+};
+
+RWStructuredBuffer<tri> tris;
+uniform uint trisLength;
+
+Ray CreateRay(float3 _o, float3 _d)
+{
+    Ray ray;
+    ray.origin = _o;
+    ray.direction = _d;
+    return ray;
+}
+
+Ray CreateCameraRay(float2 uv)
+{
+    float3 origin = mul(_CamToWorld, float4(0.0,0.0,0.0,1.0)).xyz;
+    float3 direction = mul(_CamInverseProj, float4(uv, 0.0, 1.0)).xyz;
+    direction = mul(_CamToWorld, float4(direction, 0.0)).xyz;
+    direction = normalize(direction);
+
+    return CreateRay(origin, direction);
+}
+
+float dot2(float3 n)
+{
+    return dot(n,n);
+}
+
+
+//sdf functions------------
+float udTriangle( float3 p, float3 a, float3 b, float3 c )
+{
+  float3 ba = b - a; float3 pa = p - a;
+  float3 cb = c - b; float3 pb = p - b;
+  float3 ac = a - c; float3 pc = p - c;
+  float3 nor = cross( ba, ac );
+
+  return sqrt(
+    (sign(dot(cross(ba,nor),pa)) +
+     sign(dot(cross(cb,nor),pb)) +
+     sign(dot(cross(ac,nor),pc))<2.0)
+     ?
+     min( min(
+     dot2(ba*clamp(dot(ba,pa)/dot2(ba),0.0,1.0)-pa),
+     dot2(cb*clamp(dot(cb,pb)/dot2(cb),0.0,1.0)-pb) ),
+     dot2(ac*clamp(dot(ac,pc)/dot2(ac),0.0,1.0)-pc) )
+     :
+     dot(nor,pa)*dot(nor,pa)/dot2(nor) );
+}
+
+
+float sdBox( float3 p, float3 b, float3 pos )
+{
+    p -= pos;
+    float3 q = abs(p) - b;
+    return length(max(q,0.0)) + min(max(q.x,max(q.y,q.z)),0.0);
+}
+
+float mtnBox( float3 p, float3 b, float3 pos )
+{
+    p -= pos;
+    float3 q = abs(p - b);
+    return q.x+q.y+q.z;
+}
+//---------------
+
+struct closestPoint
+{
+    float distance;
+    uint id;
+};
+
+// float map(float3 p)
+// {
+//     float minDist = 1000.0;
+//     for(int i = 0; i < trisLength; i++)
+//     {
+//         float d = udTriangle(p, tris[i].v1, tris[i].v2, tris[i].v3);
+//         minDist = min(d, minDist);
+//     }
+//     return minDist;
+// }
+
+float map(float3 p)
+{
+    float minDist = 1000.0;
+    int closest_id = -1;
+    for(int i = 0; i < trisLength; i++)
+    {
+        float d = mtnBox(p, tris[i].bounds/4, tris[i].pos);
+        if(d<minDist)
+        {
+            minDist = d;
+            closest_id = i;
+        }
+    }
+    return udTriangle(p, tris[closest_id].v1, tris[closest_id].v2, tris[closest_id].v3);
+    //return sdBox(p, tris[closest_id].bounds/2, tris[closest_id].pos);
+}
+
+
+// float map(float3 p)
+// {
+//     float minDist = 1000.0;
+//     int closest_index = -1;
+//     for(int i = 0; i < trisLength; i++)
+//     {
+//         float d = udTriangle(p, tris[i].v1, tris[i].v2, tris[i].v3);
+//         /*if(d < minDist)
+//         {
+//             cp.distance = d;
+//             minDist = cp.distance;
+//             cp.id = i;
+//         }*/
+//         minDist = min (minDist, d);
+//     }
+//     return minDist;
+// }
+
+uint closestTri(float3 p, float3 dir)
+{
+    float maxDelta = 0.0;
+    uint closestID = -1;
+    for(int i = 0; i < trisLength; i++)
+    {
+        float d1 = udTriangle(p, tris[i].v1, tris[i].v2, tris[i].v3);
+        float d2 = udTriangle(p + dir, tris[i].v1, tris[i].v2, tris[i].v3);
+
+        if(d1-d2 > maxDelta)
+        {
+            maxDelta = d1-d2;
+            closestID = i;
+        }
+    }
+    return closestID;
+}
+
+float rayCast(float3 Origin, float3 Direction)
+{
+    float maxDist = 100;
+    int i = 0;
+    float dist=0.1f;
+    for(float t = dist; t< maxDist;)
+    {
+        float h = map(Origin + Direction * t);
+        if(h<0.01f)
+        {
+            return 1.0;
+        }
+        t += h;
+    }
+    
+    return 0.0;
+}
+
+
+float O_rayCast(float3 Origin, float3 Direction)
+{
+    float maxDist = 100;
+    int i = 0;
+    float dist=0.1f;
+
+    uint c = closestTri(Origin, Direction);
+
+    if(c<0)
+    {
+        return 0.0;
+    }
+    for(float t = dist; t< maxDist;)
+    {
+        float h = udTriangle(Origin + Direction * t, tris[c].v1, tris[c].v2, tris[c].v3);
+        if(h<0.1f)
+        {
+            return 1.0;
+        }
+        t += h;
+    }
+    
+    return 0.0;
+}
+
+
+
+
+[numthreads(8,8,1)]
+void CSMain (uint3 id : SV_DispatchThreadID)
+{
+    uint width, height;
+    Result.GetDimensions(width, height);
+
+    float2 uv =  float2((id.xy + float2(0.5f, 0.5f)) / float2(width, height) * 2.0f - 1.0f);
+
+    Ray ray = CreateCameraRay(uv);
+
+    Result[id.xy] = rayCast( ray.origin, ray.direction);
+
+    //Result[id.xy] = float4(ray.direction * 0.5f + 0.5f, 1.0f);
+}
